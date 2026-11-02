@@ -1,0 +1,35 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Archivo Narrow', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Archivo Black', ui-sans-serif, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  --color-paper: #f1ece1;
+  --color-ink: #111111;
+  --color-hi: #ffd400;
+  --color-tiktok: #1a9a6c;
+  --color-reels: #e8442e;
+  --color-twitter: #2f5bd8;
+}
+
+@utility box {
+  border: 2px solid var(--color-ink);
+  background: white;
+  box-shadow: 4px 4px 0 var(--color-ink);
+}
+@utility btn {
+  border: 2px solid var(--color-ink);
+  box-shadow: 3px 3px 0 var(--color-ink);
+  transition: transform 0.05s, box-shadow 0.05s;
+  &:active { transform: translate(3px, 3px); box-shadow: none; }
+}
+@utility field {
+  border: 2px solid var(--color-ink);
+  background: white;
+  outline: none;
+  &:focus { background: var(--color-hi); }
+}
+
+input[type='number']::-webkit-inner-spin-button { -webkit-appearance: none; }
+input[type='number'] { -moz-appearance: textfield; }
