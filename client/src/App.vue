@@ -1,7 +1,8 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-import { api, setToken, hasToken, today, colorMap, setUnauthorizedHandler } from './api'
+import { api, setToken, hasToken, today, colorMap, setUnauthorizedHandler, nativeApp } from './api'
 import AuthCard from './components/AuthCard.vue'
+import AppSyncBanner from './components/AppSyncBanner.vue'
 import Avatar from './components/Avatar.vue'
 import EntryForm from './components/EntryForm.vue'
 import Leaderboard from './components/Leaderboard.vue'
@@ -70,6 +71,10 @@ async function logout() {
             <div class="font-bold">{{ me.name }}</div>
             <button class="underline underline-offset-4" @click="goto('profile')">profil</button>
             ·
+            <template v-if="nativeApp">
+              <button class="underline underline-offset-4" @click="nativeApp.openSync()">synchro</button>
+              ·
+            </template>
             <button class="underline underline-offset-4" @click="logout">quitter</button>
           </div>
           <button title="Mon profil" @click="goto('profile')">
@@ -94,6 +99,7 @@ async function logout() {
         @back="goto('home')"
       />
       <template v-else>
+        <AppSyncBanner />
         <EntryForm v-model:day="day" @saved="refreshKey++" />
         <Leaderboard :day="day" :me="me" :colors="colors" :refresh-key="refreshKey" />
         <Stats :users="users" :colors="colors" :me="me" :refresh-key="refreshKey" />

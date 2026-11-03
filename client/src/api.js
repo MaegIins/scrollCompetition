@@ -76,3 +76,28 @@ export const vDigits = {
     })
   },
 }
+
+// --- Appli Android ------------------------------------------------------------
+// Le site tourne aussi dans l'appli Android (WebView), qui expose window.ScrollApp.
+// Dans un navigateur (iPhone, ordi…) ScrollApp n'existe pas et rien de tout ça ne s'affiche.
+export const nativeApp = typeof window !== 'undefined' ? window.ScrollApp ?? null : null
+export const inAndroidApp = !!nativeApp
+
+/** Lien qui configure l'appli Android (adresse du site + clé perso). */
+export const appSetupLink = (key) =>
+  `scrollcompet://setup?url=${encodeURIComponent(window.location.origin)}&key=${encodeURIComponent(key)}`
+
+/**
+ * Génère une clé perso et l'envoie à l'appli Android. Si une clé existe déjà, prévient
+ * qu'elle sera remplacée (elle peut servir ailleurs, ex. des automatisations iPhone).
+ * Renvoie la clé, ou null si annulé.
+ */
+export async function connectAndroidApp({ existingKey = '', hasKey = false } = {}) {
+  let key = existingKey
+  if (!key) {
+    if (hasKey && !confirm("Ça va créer une nouvelle clé : l'ancienne arrêtera de marcher (ex. sur un iPhone). Continuer ?")) return null
+    key = (await api('/me/api-key', { method: 'POST' })).key
+  }
+  window.location.href = appSetupLink(key)
+  return key
+}

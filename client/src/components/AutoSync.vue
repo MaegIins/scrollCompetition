@@ -1,10 +1,11 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { api } from '../api'
+import { api, inAndroidApp, connectAndroidApp } from '../api'
 
 const status = ref({ hasKey: false, lastAutoAt: null })
 const key = ref('') // affichée une seule fois, juste après la génération
-const tab = ref('iphone')
+// Dans l'appli Android, on ouvre directement l'onglet Android
+const tab = ref(inAndroidApp ? 'android' : 'iphone')
 const msg = ref({})
 const copied = ref('')
 
@@ -21,7 +22,6 @@ const IOS_APPS = [
 const eventUrl = (app, event) => `${origin}/api/auto/event?app=${app}&event=${event}&key=${k.value}`
 const APK_URL = '/scroll-compet.apk'
 const apkAvailable = ref(true)
-const setupLink = (key) => `scrollcompet://setup?url=${encodeURIComponent(origin)}&key=${encodeURIComponent(key)}`
 
 const lastSync = computed(() => {
   if (!status.value.lastAutoAt) return null
@@ -50,19 +50,16 @@ async function generate() {
 
 // Ouvre l'appli Android avec l'adresse du site et la clé déjà remplies
 async function connectAndroid() {
-  if (!key.value) {
-    const warning = status.value.hasKey
-      ? "Ça va créer une nouvelle clé : l'ancienne arrêtera de marcher (ex. sur un iPhone). Continuer ?"
-      : null
-    if (warning && !confirm(warning)) return
-    try {
-      key.value = (await api('/me/api-key', { method: 'POST' })).key
+  msg.value = {}
+  try {
+    const k2 = await connectAndroidApp({ existingKey: key.value, hasKey: status.value.hasKey })
+    if (k2 && !key.value) {
+      key.value = k2
       status.value = { hasKey: true, lastAutoAt: null }
-    } catch (e) {
-      return (msg.value = { err: e.message })
     }
+  } catch (e) {
+    msg.value = { err: e.message }
   }
-  window.location.href = setupLink(key.value)
 }
 
 async function revoke() {
@@ -183,7 +180,14 @@ async function copy(text, id) {
         Une petite appli qui lit le temps d'utilisation mesuré par Android et l'envoie ici toutes les 30 min.
         Temps exacts, rien à faire ensuite.
       </p>
-      <ol class="list-decimal space-y-3 pl-5">
+      <div v-if="inAndroidApp" class="space-y-2">
+        <p>Tu es déjà dans l'appli : un seul bouton suffit.</p>
+        <button class="btn block w-full bg-ink py-2 font-display text-sm text-white uppercase" @click="connectAndroid">
+          Activer la synchro auto
+        </button>
+        <p class="font-mono text-[11px]">L'appli te demandera ensuite l'autorisation Android « Accès aux données d'utilisation ».</p>
+      </div>
+      <ol v-else class="list-decimal space-y-3 pl-5">
         <li>
           <b>Télécharge l'appli</b> depuis ce téléphone :
           <a
@@ -216,7 +220,7 @@ async function copy(text, id) {
         </li>
       </ol>
 
-      <details class="font-mono text-[11px]">
+      <details v-if="!inAndroidApp" class="font-mono text-[11px]">
         <summary class="cursor-pointer underline underline-offset-4">Le bouton ne marche pas ? Connexion à la main</summary>
         <p class="mt-2">Dans l'appli, colle l'adresse du site et ta clé :</p>
         <div class="mt-1 flex items-center gap-2">
