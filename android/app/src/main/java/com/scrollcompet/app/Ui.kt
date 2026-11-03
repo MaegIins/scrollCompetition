@@ -23,7 +23,8 @@ fun applySystemBarInsets(view: View) {
 /** Icônes de la barre d'état en sombre (fond clair « papier » de l'appli). */
 fun Activity.darkStatusBarIcons() {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
-    window.insetsController?.setSystemBarsAppearance(
+    // decorView (et non window.insetsController) : crée la fenêtre si besoin, sinon NPE avant setContentView (Android 16)
+    window.decorView.windowInsetsController?.setSystemBarsAppearance(
         WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
         WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
     )

@@ -12,8 +12,8 @@ android {
         applicationId = "com.scrollcompet.app"
         minSdk = 26 // Android 8
         targetSdk = 35
-        versionCode = 5
-        versionName = "1.4"
+        versionCode = 6
+        versionName = "1.5"
 
         // Adresse du site chargée au premier lancement (modifiable dans l'écran Synchro)
         val defaultUrl = (project.findProperty("scrollcompet.defaultUrl") as String?).orEmpty()
