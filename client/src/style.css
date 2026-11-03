@@ -8,9 +8,13 @@
   --color-paper: #f1ece1;
   --color-ink: #111111;
   --color-hi: #ffd400;
-  --color-tiktok: #1a9a6c;
-  --color-reels: #e8442e;
-  --color-twitter: #2f5bd8;
+  /* Couleurs des applis, inspirées de leurs marques (validées daltonisme sur toutes les paires) */
+  --color-tiktok: #1aa6a1;
+  --color-reels: #b5329a;
+  --color-twitter: #2f6fe4;
+  --color-youtube: #e8481e;
+  /* Erreurs + bandeau anti-triche : indépendant des couleurs d'applis */
+  --color-alert: #e8442e;
 }
 
 @utility box {

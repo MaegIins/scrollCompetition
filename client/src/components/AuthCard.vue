@@ -67,7 +67,7 @@ async function submit() {
         <span class="font-mono text-xs uppercase">Code d'invitation</span>
         <input v-model="invite" class="field mt-1 w-full px-3 py-2 text-lg" />
       </label>
-      <p v-if="error" class="bg-reels px-2 py-1 font-mono text-sm text-white">{{ error }}</p>
+      <p v-if="error" class="bg-alert px-2 py-1 font-mono text-sm text-white">{{ error }}</p>
       <button :disabled="loading" class="btn w-full bg-ink py-3 font-display text-lg text-white uppercase disabled:opacity-50">
         {{ mode === 'login' ? 'Entrer' : 'Je rejoins' }}
       </button>

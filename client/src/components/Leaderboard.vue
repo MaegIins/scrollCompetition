@@ -119,7 +119,7 @@ watch([() => range.value.join(), () => props.refreshKey], load, { immediate: tru
         >
           <div class="mb-2 flex items-center gap-3">
             <span class="w-8 font-display text-2xl tabular-nums" :class="!r.total && 'text-ink/25'">
-              {{ String(ranks.get(r.id)).padStart(2, '0') }}
+              {{ r.total ? String(ranks.get(r.id)).padStart(2, '0') : '–' }}
             </span>
             <span class="relative shrink-0">
               <Avatar :user="r" :color="colors[r.id]" :size="ranks.get(r.id) === 1 && r.total ? 44 : 36" />

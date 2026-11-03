@@ -4,7 +4,8 @@
   "main": "index.js",
   "scripts": {
     "dev": "node --watch --disable-warning=ExperimentalWarning index.js",
-    "start": "node --disable-warning=ExperimentalWarning index.js"
+    "start": "node --disable-warning=ExperimentalWarning index.js",
+    "test": "node --disable-warning=ExperimentalWarning --test --test-reporter=spec \"test/**/*.test.js\""
   },
   "dependencies": {
     "express": "^4.22.3"

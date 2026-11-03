@@ -6,7 +6,7 @@ import { fmt, fmtShort, dayLabel, niceMax, niceTicks } from '../api'
 const props = defineProps({
   days: { type: Array, required: true },
   segments: { type: Array, required: true }, // [{ key, label, hex }]
-  rows: { type: Object, required: true }, // { 'YYYY-MM-DD': { tiktok, reels, twitter } }
+  rows: { type: Object, required: true }, // { 'YYYY-MM-DD': { tiktok, reels, twitter, youtube } }
   height: { type: Number, default: 200 },
 })
 

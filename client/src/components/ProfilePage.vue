@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { api, resizeImage } from '../api'
 import Avatar from './Avatar.vue'
+import AutoSync from './AutoSync.vue'
 
 const props = defineProps({ me: Object, color: String })
 const emit = defineEmits(['update', 'back'])
@@ -84,7 +85,7 @@ async function savePin() {
         </div>
       </div>
       <p v-if="avatarMsg.ok" class="border-t-2 border-ink px-4 py-2 font-mono text-xs">{{ avatarMsg.ok }} ✓</p>
-      <p v-if="avatarMsg.err" class="bg-reels px-4 py-2 font-mono text-xs text-white">{{ avatarMsg.err }}</p>
+      <p v-if="avatarMsg.err" class="bg-alert px-4 py-2 font-mono text-xs text-white">{{ avatarMsg.err }}</p>
     </section>
 
     <form class="box" @submit.prevent="saveName">
@@ -99,7 +100,7 @@ async function savePin() {
         </button>
       </div>
       <p v-if="nameMsg.ok" class="border-t-2 border-ink px-4 py-2 font-mono text-xs">{{ nameMsg.ok }} ✓</p>
-      <p v-if="nameMsg.err" class="bg-reels px-4 py-2 font-mono text-xs text-white">{{ nameMsg.err }}</p>
+      <p v-if="nameMsg.err" class="bg-alert px-4 py-2 font-mono text-xs text-white">{{ nameMsg.err }}</p>
     </form>
 
     <form class="box" @submit.prevent="savePin">
@@ -122,7 +123,9 @@ async function savePin() {
         </button>
       </div>
       <p v-if="pinMsg.ok" class="border-t-2 border-ink px-4 py-2 font-mono text-xs">{{ pinMsg.ok }} ✓</p>
-      <p v-if="pinMsg.err" class="bg-reels px-4 py-2 font-mono text-xs text-white">{{ pinMsg.err }}</p>
+      <p v-if="pinMsg.err" class="bg-alert px-4 py-2 font-mono text-xs text-white">{{ pinMsg.err }}</p>
     </form>
+
+    <AutoSync />
   </div>
 </template>

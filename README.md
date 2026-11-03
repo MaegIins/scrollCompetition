@@ -1,6 +1,6 @@
 # 📱 Scroll Competition
 
-Qui a le plus scrollé TikTok / Reels / Twitter aujourd'hui ? Celui-là gagne (bravo… ou pas).
+Qui a le plus scrollé TikTok / Reels / Twitter / YouTube aujourd'hui ? Celui-là gagne (bravo… ou pas).
 
 - **Front** : Vue 3 + Vite + Tailwind v4 (`client/`)
 - **Back** : Express + SQLite natif de Node (`node:sqlite`, Node ≥ 22) (`server/`)
@@ -11,6 +11,33 @@ Qui a le plus scrollé TikTok / Reels / Twitter aujourd'hui ? Celui-là gagne (b
 npm run install:all
 npm run dev          # API sur :3001, front sur :5173 (accessible sur le réseau local)
 ```
+
+## Appli Android
+
+Prérequis : JDK 17+ et le SDK Android (`ANDROID_HOME`, plateforme 35 + build-tools 35).
+
+```bash
+npm run build:android   # compile l'APK et la publie dans client/public/scroll-compet.apk (servie sur /scroll-compet.apk)
+npm run test:android    # tests JUnit du calcul du temps d'usage
+```
+
+L'APK est signée avec la clé de debug de la machine qui compile : pour que les mises à jour s'installent
+par-dessus l'ancienne version, compile toujours depuis la même machine. Elle s'installe hors Play Store
+(« sources inconnues »).
+
+## Tests
+
+```bash
+npm test             # serveur + client, sans dépendance (node:test)
+```
+
+- `server/test/api.test.js` : toutes les routes sur une base en mémoire, avec une horloge simulée
+  (sessions iPhone, passage de minuit, jour par défaut à Paris…), plus la migration d'une ancienne base.
+- `server/test/unit.test.js` : dates, pseudos, découpage des sessions par jour (dont changement d'heure).
+- `client/test/utils.test.js` : dates locales, formats de durée, graduations des graphes, filtre des chiffres.
+
+Le serveur est découpé en `server/app.js` (`createApp({ dbPath, inviteCode, appTz, now })`, testable)
+et `server/index.js` (lit les variables d'env et lance l'écoute).
 
 ## Prod (un seul process)
 
@@ -26,7 +53,7 @@ Variables d'env :
 
 ## Fonctionnement
 
-Chacun s'inscrit avec un pseudo + PIN, puis saisit chaque jour son temps par appli (TikTok, Reels, Twitter)
+Chacun s'inscrit avec un pseudo + PIN, puis saisit chaque jour son temps par appli (TikTok, Reels, Twitter, YouTube)
 depuis Réglages › Temps d'écran (iOS) ou Bien-être numérique (Android). On se base sur la confiance.
 
 - **Classement** par jour, semaine, mois ou depuis le début ; top 10 + ta place si tu es plus bas.
@@ -36,5 +63,23 @@ depuis Réglages › Temps d'écran (iOS) ou Bien-être numérique (Android). On
 - **Stats** : courbes de tout le monde sur 7 ou 30 jours (légende cliquable pour isoler / ajouter des gens),
   détail par appli, vue tableau.
 - **Profil** : photo, pseudo, changement de PIN (déconnecte les autres appareils).
+
+## Saisie automatique
+
+Dans le profil, chacun génère une **clé perso** (affichée une fois, stockée hachée) et suit le tuto :
+
+- **Android** : mini appli maison (`android/`, Kotlin). Elle lit le temps d'usage Android depuis minuit
+  (événements `UsageStatsManager`) et l'envoie toutes les 30 min via WorkManager.
+  Configuration en un geste : sur le téléphone, Profil › Android › « Connecter l'appli » ouvre
+  `scrollcompet://setup?url=…&key=…`. Route utilisée : `POST /api/auto/usage` avec `Authorization: Bearer sc_…`
+  et `{"day": "YYYY-MM-DD", "tiktok": s, "instagram": s, "x": s, "youtube": s}` en **secondes**.
+- **iPhone** (Raccourcis, automatisations « App ouverte / fermée ») :
+  `POST /api/auto/event?app=tiktok&event=open|close&key=sc_…`. Le serveur calcule les sessions
+  (découpées à minuit, ignorées au-delà de 4h ou sans ouverture).
+
+Instagram compte dans Reels. Pour une appli suivie automatiquement, l'automatique remplace la saisie manuelle du jour.
+Le téléphone doit pouvoir joindre le serveur (même Wi-Fi en dev, ou appli déployée).
+
+Variable d'env : `APP_TZ` (défaut `Europe/Paris`).
 
 Sécurité : PIN haché (scrypt), blocage progressif après 5 PIN faux (30 s → 15 min max).

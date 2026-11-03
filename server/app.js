@@ -1,0 +1,454 @@
+import express from 'express'
+import { DatabaseSync } from 'node:sqlite'
+import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
+import { existsSync } from 'node:fs'
+import path from 'node:path'
+
+// Applis suivies (= colonnes de la table entries). Pour en ajouter une : l'ajouter ici + côté client (utils.js).
+export const APPS = ['tiktok', 'reels', 'twitter', 'youtube']
+const SUM_APPS = (p = '') => APPS.map((a) => p + a).join(' + ') // ex. "e.tiktok + e.reels + …"
+export const MAX_MINUTES = 24 * 60
+const MAX_SESSION_MS = 4 * 3600e3 // iPhone : au-delà, on considère que la fermeture a été ratée
+// Noms acceptés par appli (le Temps d'écran ne distingue pas les Reels d'Instagram, ni X de Twitter)
+const APP_ALIASES = { tiktok: 'tiktok', reels: 'reels', instagram: 'reels', twitter: 'twitter', x: 'twitter', youtube: 'youtube' }
+
+// --- Fonctions pures (testées unitairement) ----------------------------------
+const hashPin = (pin) => {
+  const salt = randomBytes(16).toString('hex')
+  return `${salt}:${scryptSync(pin, salt, 32).toString('hex')}`
+}
+const checkPin = (pin, stored) => {
+  const [salt, hash] = stored.split(':')
+  const a = Buffer.from(hash, 'hex')
+  const b = scryptSync(pin, salt, 32)
+  return a.length === b.length && timingSafeEqual(a, b)
+}
+const sha256 = (s) => createHash('sha256').update(s).digest('hex')
+// YYYY-MM-DD et date réelle (rejette 2026-13-45, 2026-02-30…)
+export const isDay = (s) => {
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false
+  const d = new Date(`${s}T00:00:00Z`)
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s
+}
+export const checkName = (name) => {
+  if (name.length < 2 || name.length > 20) return 'Pseudo entre 2 et 20 caractères'
+  if (/\p{Cc}/u.test(name)) return 'Caractères invisibles interdits dans le pseudo'
+  return null
+}
+export const dayInTz = (ms, tz) => new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date(ms)) // YYYY-MM-DD
+// Début du jour suivant dans le fuseau tz. Pas d'API native : on avance par heures, minutes puis secondes.
+export const nextMidnight = (ms, tz) => {
+  const day = dayInTz(ms, tz)
+  let t = ms
+  for (let step = 3600e3; step >= 60e3; step /= 60) while (dayInTz(t + step, tz) === day) t += step
+  while (dayInTz(t, tz) === day) t += 1000
+  return t
+}
+// Répartit une session [start, end[ en secondes par jour (une session peut passer minuit)
+export const splitByDay = (start, end, tz) => {
+  const days = {}
+  for (let t = start; t < end; ) {
+    const stop = Math.min(end, nextMidnight(t, tz))
+    const d = dayInTz(t, tz)
+    days[d] = (days[d] || 0) + Math.round((stop - t) / 1000)
+    t = stop
+  }
+  return days
+}
+const bad = (res, msg, code = 400) => res.status(code).json({ error: msg })
+const bearer = (req) => (req.headers.authorization || '').replace(/^Bearer /, '')
+const lockedMsg = (s) => `Trop d'essais, réessaie dans ${s > 60 ? `${Math.ceil(s / 60)} min` : `${s} s`}`
+// Hash factice : la connexion prend le même temps que le pseudo existe ou non
+const DUMMY_HASH = hashPin('0000')
+
+/**
+ * Crée l'app Express et sa base.
+ * @param {object} o
+ * @param {string} [o.dbPath]      fichier SQLite (':memory:' pour les tests)
+ * @param {string} [o.inviteCode]  si défini, requis pour s'inscrire
+ * @param {string} [o.appTz]       fuseau pour « quel jour on est » côté serveur
+ * @param {() => number} [o.now]   horloge en ms, injectable pour les tests
+ * @param {string} [o.distDir]     front buildé à servir (prod)
+ */
+export function createApp({ dbPath = ':memory:', inviteCode = '', appTz = 'Europe/Paris', now = Date.now, distDir } = {}) {
+  const db = new DatabaseSync(dbPath)
+  db.exec(`
+    PRAGMA journal_mode = WAL;
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      pin_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS sessions (
+      token TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS entries (
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      day TEXT NOT NULL,
+      tiktok INTEGER NOT NULL DEFAULT 0,
+      reels INTEGER NOT NULL DEFAULT 0,
+      twitter INTEGER NOT NULL DEFAULT 0,
+      youtube INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, day)
+    );
+  `)
+  // Migration : Shorts remplacé par Twitter
+  const entryCols = db.prepare('PRAGMA table_info(entries)').all().map((c) => c.name)
+  if (entryCols.includes('shorts')) db.exec('ALTER TABLE entries RENAME COLUMN shorts TO twitter')
+  // Migration : nouvelles applis ajoutées à APPS
+  for (const a of APPS) {
+    if (!entryCols.includes(a) && !(a === 'twitter' && entryCols.includes('shorts'))) {
+      db.exec(`ALTER TABLE entries ADD COLUMN ${a} INTEGER NOT NULL DEFAULT 0`)
+    }
+  }
+  // Migration : photo de profil (data URL) + version pour le cache navigateur
+  const cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name)
+  if (!cols.includes('avatar')) db.exec('ALTER TABLE users ADD COLUMN avatar TEXT')
+  if (!cols.includes('avatar_v')) db.exec('ALTER TABLE users ADD COLUMN avatar_v INTEGER NOT NULL DEFAULT 0')
+  // Migration : clé perso pour la saisie automatique (stockée hachée) + date de dernière synchro
+  if (!cols.includes('api_key_hash')) db.exec('ALTER TABLE users ADD COLUMN api_key_hash TEXT')
+  if (!cols.includes('last_auto_at')) db.exec('ALTER TABLE users ADD COLUMN last_auto_at TEXT')
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS users_api_key ON users(api_key_hash);
+    -- iPhone : appli ouverte en attente de sa fermeture
+    CREATE TABLE IF NOT EXISTS auto_open (
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      app TEXT NOT NULL,
+      opened_at INTEGER NOT NULL, -- ms
+      PRIMARY KEY (user_id, app)
+    );
+    -- iPhone : secondes cumulées par jour et par appli (source de vérité, arrondie en minutes dans entries)
+    CREATE TABLE IF NOT EXISTS auto_usage (
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      day TEXT NOT NULL,
+      app TEXT NOT NULL,
+      seconds INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (user_id, day, app)
+    );
+  `)
+
+  // Dernier jour saisissable : demain en UTC, pour laisser de la marge aux fuseaux horaires
+  const maxEntryDay = () => new Date(now() + 36 * 3600e3).toISOString().slice(0, 10)
+  const newSession = (userId) => {
+    const token = randomBytes(24).toString('hex')
+    db.prepare('INSERT INTO sessions (token, user_id) VALUES (?, ?)').run(token, userId)
+    return token
+  }
+  const setEntryValue = (userId, day, appKey, minutes) => {
+    db.prepare(`
+      INSERT INTO entries (user_id, day, ${appKey}) VALUES (?, ?, ?)
+      ON CONFLICT (user_id, day) DO UPDATE SET ${appKey} = excluded.${appKey}, updated_at = datetime('now')
+    `).run(userId, day, minutes)
+  }
+
+  // Anti-bruteforce du PIN : après 5 échecs, blocage croissant (30 s, 1 min, 2 min… max 15 min)
+  const attempts = new Map() // clé -> { fails, until, last }
+  const lockedFor = (key) => {
+    const a = attempts.get(key)
+    return a && a.until > Date.now() ? Math.ceil((a.until - Date.now()) / 1000) : 0
+  }
+  const recordFail = (key) => {
+    const a = attempts.get(key) || { fails: 0, until: 0 }
+    a.fails++
+    a.last = Date.now()
+    if (a.fails >= 5) a.until = Date.now() + Math.min(15 * 60e3, 30e3 * 2 ** (a.fails - 5))
+    attempts.set(key, a)
+  }
+  const purge = setInterval(() => {
+    for (const [k, a] of attempts) if (Date.now() - a.last > 3600e3) attempts.delete(k)
+  }, 600e3)
+  purge.unref()
+
+  const auth = (req, res, next) => {
+    const token = bearer(req)
+    const user = token
+      ? db.prepare('SELECT u.id, u.name, u.avatar_v FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?').get(token)
+      : null
+    if (!user) return bad(res, 'Non connecté', 401)
+    req.user = user
+    next()
+  }
+  // Auth par clé perso : en-tête « Authorization: Bearer sc_… » ou ?key=sc_… (plus simple dans Raccourcis)
+  const apiKeyAuth = (req, res, next) => {
+    // Un paramètre répété (?key=a&key=b) arrive en tableau : on l'ignore
+    const key = typeof req.query.key === 'string' ? req.query.key : bearer(req)
+    const user = key.startsWith('sc_')
+      ? db.prepare('SELECT id, name FROM users WHERE api_key_hash = ?').get(sha256(key))
+      : null
+    if (!user) return bad(res, 'Clé invalide', 401)
+    req.user = user
+    db.prepare("UPDATE users SET last_auto_at = datetime('now') WHERE id = ?").run(user.id)
+    next()
+  }
+
+  const app = express()
+  app.use(express.json({ limit: '400kb' }))
+  app.use((req, _res, next) => {
+    req.body ??= {} // requête sans corps JSON
+    next()
+  })
+
+  app.get('/api/config', (_req, res) => res.json({ inviteRequired: !!inviteCode }))
+
+  app.post('/api/register', (req, res) => {
+    const name = String(req.body.name || '').trim()
+    const pin = String(req.body.pin || '')
+    if (inviteCode && req.body.invite !== inviteCode) return bad(res, "Code d'invitation invalide", 403)
+    if (checkName(name)) return bad(res, checkName(name))
+    if (!/^\d{4,8}$/.test(pin)) return bad(res, 'Le PIN doit faire 4 à 8 chiffres')
+    if (db.prepare('SELECT 1 FROM users WHERE name = ?').get(name)) return bad(res, 'Pseudo déjà pris', 409)
+    const { lastInsertRowid } = db.prepare('INSERT INTO users (name, pin_hash) VALUES (?, ?)').run(name, hashPin(pin))
+    const id = Number(lastInsertRowid)
+    res.json({ token: newSession(id), user: { id, name, avatar_v: 0 } })
+  })
+
+  app.post('/api/login', (req, res) => {
+    const name = String(req.body.name || '').trim()
+    const key = `login:${name.toLowerCase()}`
+    const wait = lockedFor(key)
+    if (wait) return bad(res, lockedMsg(wait), 429)
+    const user = db.prepare('SELECT * FROM users WHERE name = ?').get(name)
+    const ok = checkPin(String(req.body.pin || ''), user?.pin_hash ?? DUMMY_HASH)
+    if (!user || !ok) {
+      recordFail(key)
+      return bad(res, 'Pseudo ou PIN incorrect', 401)
+    }
+    attempts.delete(key)
+    res.json({ token: newSession(user.id), user: { id: user.id, name: user.name, avatar_v: user.avatar_v } })
+  })
+
+  app.post('/api/logout', auth, (req, res) => {
+    db.prepare('DELETE FROM sessions WHERE token = ?').run(bearer(req))
+    res.json({ ok: true })
+  })
+
+  app.get('/api/me', auth, (req, res) => res.json({ user: req.user }))
+
+  // Photo de profil : le client envoie une image déjà redimensionnée (data URL)
+  app.put('/api/me/avatar', auth, (req, res) => {
+    const dataUrl = String(req.body.dataUrl || '')
+    if (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(dataUrl)) return bad(res, 'Image invalide')
+    if (dataUrl.length > 300_000) return bad(res, 'Image trop lourde')
+    const v = Date.now()
+    db.prepare('UPDATE users SET avatar = ?, avatar_v = ? WHERE id = ?').run(dataUrl, v, req.user.id)
+    res.json({ avatar_v: v })
+  })
+  app.delete('/api/me/avatar', auth, (req, res) => {
+    db.prepare('UPDATE users SET avatar = NULL, avatar_v = 0 WHERE id = ?').run(req.user.id)
+    res.json({ avatar_v: 0 })
+  })
+  // Public (une balise <img> n'envoie pas de token) ; URL versionnée => cache long
+  app.get('/api/avatar/:id', (req, res) => {
+    const row = db.prepare('SELECT avatar FROM users WHERE id = ?').get(Number(req.params.id))
+    const m = row?.avatar?.match(/^data:(image\/\w+);base64,(.+)$/)
+    if (!m) return res.status(404).end()
+    res.set('Cache-Control', 'public, max-age=31536000, immutable').type(m[1]).send(Buffer.from(m[2], 'base64'))
+  })
+
+  // Profil : pseudo + PIN
+  app.patch('/api/me', auth, (req, res) => {
+    const name = String(req.body.name || '').trim()
+    const err = checkName(name)
+    if (err) return bad(res, err)
+    if (db.prepare('SELECT 1 FROM users WHERE name = ? AND id != ?').get(name, req.user.id)) return bad(res, 'Pseudo déjà pris', 409)
+    db.prepare('UPDATE users SET name = ? WHERE id = ?').run(name, req.user.id)
+    res.json({ user: { ...req.user, name } })
+  })
+
+  app.put('/api/me/pin', auth, (req, res) => {
+    const key = `pin:${req.user.id}`
+    const wait = lockedFor(key)
+    if (wait) return bad(res, lockedMsg(wait), 429)
+    const { pin_hash } = db.prepare('SELECT pin_hash FROM users WHERE id = ?').get(req.user.id)
+    if (!checkPin(String(req.body.current || ''), pin_hash)) {
+      recordFail(key)
+      return bad(res, 'PIN actuel incorrect', 403)
+    }
+    attempts.delete(key)
+    const next = String(req.body.next || '')
+    if (!/^\d{4,8}$/.test(next)) return bad(res, 'Le PIN doit faire 4 à 8 chiffres')
+    db.prepare('UPDATE users SET pin_hash = ? WHERE id = ?').run(hashPin(next), req.user.id)
+    // Déconnecte les autres appareils, garde la session courante
+    db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?').run(req.user.id, bearer(req))
+    res.json({ ok: true })
+  })
+
+  // Clé perso : générée à la demande, affichée une seule fois
+  app.get('/api/me/api-key', auth, (req, res) => {
+    const row = db.prepare('SELECT api_key_hash, last_auto_at FROM users WHERE id = ?').get(req.user.id)
+    res.json({ hasKey: !!row.api_key_hash, lastAutoAt: row.last_auto_at })
+  })
+  app.post('/api/me/api-key', auth, (req, res) => {
+    const key = `sc_${randomBytes(20).toString('hex')}`
+    db.prepare('UPDATE users SET api_key_hash = ?, last_auto_at = NULL WHERE id = ?').run(sha256(key), req.user.id)
+    res.json({ key })
+  })
+  app.delete('/api/me/api-key', auth, (req, res) => {
+    db.prepare('UPDATE users SET api_key_hash = NULL WHERE id = ?').run(req.user.id)
+    db.prepare('DELETE FROM auto_open WHERE user_id = ?').run(req.user.id)
+    res.json({ ok: true })
+  })
+
+  // Android (Automate…) : totaux du jour en SECONDES, par appli. Seules les applis envoyées sont mises à jour.
+  // { "tiktok": 3600, "instagram": 1200, "x": 300, "youtube": 900, "day": "YYYY-MM-DD" (optionnel) }
+  app.post('/api/auto/usage', apiKeyAuth, (req, res) => {
+    const day = req.body.day ?? dayInTz(now(), appTz)
+    if (!isDay(day) || day > maxEntryDay()) return bad(res, 'Date invalide')
+    const updated = {}
+    for (const [field, raw] of Object.entries(req.body)) {
+      const appKey = APP_ALIASES[field.toLowerCase()]
+      if (!appKey) continue
+      const sec = Number(raw)
+      if (!Number.isFinite(sec) || sec < 0 || sec > 86400) return bad(res, `Valeur invalide pour ${field}`)
+      updated[appKey] = Math.round(sec / 60)
+    }
+    if (!Object.keys(updated).length) return bad(res, 'Aucune appli reconnue (tiktok, instagram, x, youtube)')
+    for (const [appKey, min] of Object.entries(updated)) setEntryValue(req.user.id, day, appKey, min)
+    res.json({ day, minutes: updated })
+  })
+
+  // iPhone (Raccourcis) : une automatisation par appli et par événement.
+  // POST /api/auto/event?app=tiktok&event=open|close&key=sc_…
+  app.post('/api/auto/event', apiKeyAuth, (req, res) => {
+    const appKey = APP_ALIASES[String(req.query.app ?? req.body.app ?? '').toLowerCase()]
+    const event = String(req.query.event ?? req.body.event ?? '').toLowerCase()
+    if (!appKey) return bad(res, 'Appli inconnue (tiktok, instagram, x, youtube)')
+    if (event !== 'open' && event !== 'close') return bad(res, 'event doit valoir open ou close')
+    const t = now()
+
+    if (event === 'open') {
+      db.prepare(`
+        INSERT INTO auto_open (user_id, app, opened_at) VALUES (?, ?, ?)
+        ON CONFLICT (user_id, app) DO UPDATE SET opened_at = excluded.opened_at
+      `).run(req.user.id, appKey, t)
+      return res.json({ ok: true, app: appKey, event })
+    }
+
+    const open = db.prepare('SELECT opened_at FROM auto_open WHERE user_id = ? AND app = ?').get(req.user.id, appKey)
+    if (!open) return res.json({ ok: true, app: appKey, event, ignored: 'pas d’ouverture enregistrée' })
+    db.prepare('DELETE FROM auto_open WHERE user_id = ? AND app = ?').run(req.user.id, appKey)
+    if (t - open.opened_at > MAX_SESSION_MS) return res.json({ ok: true, app: appKey, event, ignored: 'session trop longue' })
+
+    // Ajout des secondes jour par jour (une session peut passer minuit)
+    const days = splitByDay(open.opened_at, t, appTz)
+    for (const [d, sec] of Object.entries(days)) {
+      db.prepare(`
+        INSERT INTO auto_usage (user_id, day, app, seconds) VALUES (?, ?, ?, ?)
+        ON CONFLICT (user_id, day, app) DO UPDATE SET seconds = seconds + excluded.seconds
+      `).run(req.user.id, d, appKey, sec)
+      const { seconds } = db.prepare('SELECT seconds FROM auto_usage WHERE user_id = ? AND day = ? AND app = ?').get(req.user.id, d, appKey)
+      setEntryValue(req.user.id, d, appKey, Math.min(MAX_MINUTES, Math.round(seconds / 60)))
+    }
+    res.json({ ok: true, app: appKey, event, added: days })
+  })
+
+  app.get('/api/users', auth, (_req, res) => {
+    res.json(db.prepare('SELECT id, name, avatar_v FROM users ORDER BY id').all())
+  })
+
+  // Saisie / modification du temps d'une journée (en minutes)
+  app.put('/api/entries/:day', auth, (req, res) => {
+    const { day } = req.params
+    if (!isDay(day)) return bad(res, 'Date invalide')
+    if (day > maxEntryDay()) return bad(res, 'Pas de saisie dans le futur')
+    const vals = {}
+    for (const a of APPS) {
+      const v = Math.round(Number(req.body[a] ?? 0))
+      if (!Number.isFinite(v) || v < 0) return bad(res, `Valeur invalide pour ${a}`)
+      if (v > MAX_MINUTES) return bad(res, 'Maximum 24h par appli')
+      vals[a] = v
+    }
+    db.prepare(`
+      INSERT INTO entries (user_id, day, ${APPS.join(', ')}) VALUES (?, ?, ${APPS.map(() => '?').join(', ')})
+      ON CONFLICT (user_id, day) DO UPDATE SET
+        ${APPS.map((a) => `${a} = excluded.${a}`).join(', ')}, updated_at = datetime('now')
+    `).run(req.user.id, day, ...APPS.map((a) => vals[a]))
+    res.json({ day, ...vals })
+  })
+
+  // Mes saisies sur une période
+  app.get('/api/entries/me', auth, (req, res) => {
+    const { from, to } = req.query
+    if (!isDay(from) || !isDay(to)) return bad(res, 'Période invalide')
+    const rows = db.prepare(
+      `SELECT day, ${APPS.join(', ')} FROM entries WHERE user_id = ? AND day BETWEEN ? AND ? ORDER BY day`
+    ).all(req.user.id, from, to)
+    res.json(rows)
+  })
+
+  // Classement sur une période (from = to pour une journée)
+  app.get('/api/leaderboard', auth, (req, res) => {
+    const { from, to, activeSince } = req.query
+    if (!isDay(from) || !isDay(to)) return bad(res, 'Période invalide')
+    if (activeSince && !isDay(activeSince)) return bad(res, 'Date invalide')
+
+    const ranking = db.prepare(`
+      SELECT u.id, u.name, u.avatar_v,
+        ${APPS.map((a) => `COALESCE(SUM(e.${a}), 0) AS ${a},`).join('\n      ')}
+        COALESCE(SUM(${SUM_APPS('e.')}), 0) AS total,
+        COUNT(e.day) AS days,
+        COUNT(CASE WHEN ${SUM_APPS('e.')} > ${MAX_MINUTES} THEN 1 END) AS suspect_days,
+        (SELECT MAX(day) FROM entries WHERE user_id = u.id AND day <= ?) AS last_day
+      FROM users u
+      LEFT JOIN entries e ON e.user_id = u.id AND e.day BETWEEN ? AND ?
+      GROUP BY u.id
+      ORDER BY total DESC, u.name
+    `).all(to, from, to)
+
+    // Palmarès : journées gagnées depuis le début, journée en cours exclue (winsBefore = aujourd'hui côté client)
+    const winsBefore = isDay(req.query.winsBefore) ? req.query.winsBefore : '9999-12-31'
+    const wins = db.prepare(`
+      WITH totals AS (
+        SELECT user_id, day, ${SUM_APPS()} AS t FROM entries WHERE day < ?
+      ), best AS (
+        SELECT day, MAX(t) AS m FROM totals GROUP BY day HAVING m > 0
+      )
+      SELECT t.user_id, COUNT(*) AS wins FROM totals t JOIN best b ON b.day = t.day AND b.m = t.t GROUP BY t.user_id
+    `).all(winsBefore)
+    const winMap = Object.fromEntries(wins.map((w) => [w.user_id, w.wins]))
+
+    // On masque les inactifs (rien saisi depuis activeSince), sauf soi-même.
+    // Pour une période terminée (ended=1), ceux qui y ont participé restent affichés.
+    const ended = req.query.ended === '1'
+    const visible = ranking.filter(
+      (r) =>
+        !activeSince || r.id === req.user.id || (ended && r.days > 0) || (r.last_day && r.last_day >= activeSince)
+    )
+    res.json(visible.map(({ last_day, ...r }) => ({ ...r, wins: winMap[r.id] || 0 })))
+  })
+
+  // Totaux journaliers de chacun sur une période (pour les graphes)
+  app.get('/api/series', auth, (req, res) => {
+    const { from, to } = req.query
+    if (!isDay(from) || !isDay(to)) return bad(res, 'Période invalide')
+    res.json(db.prepare(`
+      SELECT user_id, day, ${APPS.join(', ')}, ${SUM_APPS()} AS total
+      FROM entries WHERE day BETWEEN ? AND ? ORDER BY day
+    `).all(from, to))
+  })
+
+  // En prod : sert le front buildé
+  if (distDir && existsSync(distDir)) {
+    app.use(express.static(distDir))
+    app.get(/^(?!\/api).*/, (_req, res) => res.sendFile(path.join(distDir, 'index.html')))
+  }
+
+  // Erreurs non prévues (JSON mal formé, contrainte SQL…) : toujours une réponse JSON
+  app.use((err, _req, res, _next) => {
+    if (err.type === 'entity.parse.failed') return bad(res, 'JSON invalide')
+    if (err.type === 'entity.too.large') return bad(res, 'Requête trop lourde', 413)
+    if (String(err.code).startsWith('ERR_SQLITE') && /UNIQUE/.test(err.message)) return bad(res, 'Pseudo déjà pris', 409)
+    console.error(err)
+    bad(res, 'Erreur serveur', 500)
+  })
+
+  const close = () => {
+    clearInterval(purge)
+    db.close()
+  }
+  return { app, db, close }
+}

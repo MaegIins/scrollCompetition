@@ -151,9 +151,9 @@ function cancel() {
       <p v-if="total > 1440" class="border-t-2 border-ink bg-ink px-4 py-2 font-mono text-xs text-hi">
         Plus de 24h dans une journée ? Tu vas être marqué SUSPECT aux yeux de tous.
       </p>
-      <p v-if="status" class="bg-reels px-4 py-2 font-mono text-sm text-white">{{ status }}</p>
+      <p v-if="status" class="bg-alert px-4 py-2 font-mono text-sm text-white">{{ status }}</p>
 
-      <p class="border-t-2 border-ink bg-reels px-4 py-3 text-center font-display text-lg leading-tight text-white uppercase">
+      <p class="border-t-2 border-ink bg-alert px-4 py-3 text-center font-display text-lg leading-tight text-white uppercase">
         T'es une grosse salope si tu triches
       </p>
     </form>
