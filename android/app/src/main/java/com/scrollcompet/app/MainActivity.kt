@@ -147,6 +147,15 @@ class MainActivity : Activity() {
                 val key = keyFor(pkg)
                 row(if (key != null) "$pkg → ${LABELS[key]?.substringBefore(' ')}" else pkg, Sync.fmt(sec), bold = key != null)
             }
+            // Détail YouTube / Morphe : événements reçus, total agrégé d'Android, visibilité
+            caption("\nDétail YouTube :")
+            val yt = Usage.diagnose(this, LocalDate.now()) { "youtube" in it.lowercase() || "morphe" in it.lowercase() }
+            if (yt.isEmpty()) caption("Aucun paquet YouTube trouvé.")
+            yt.forEach { d ->
+                caption(
+                    "${d.pkg}\n  ${d.events} événements → ${Sync.fmt(d.seconds)} · compté : ${keyFor(d.pkg)?.let { LABELS[it] } ?: "non"}"
+                )
+            }
             link("masquer") { showDiag = false; render() }
         }
 

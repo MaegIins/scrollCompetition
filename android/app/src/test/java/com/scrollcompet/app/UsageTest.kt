@@ -104,6 +104,32 @@ class UsageTest {
         assert(TRACKED.values.flatten().let { it.size == it.toSet().size }) // aucun paquet dans deux applis
     }
 
+    @Test fun `régression Morphe - ouverte avant minuit, interactions avant la pause`() {
+        // Séquence réelle relevée sur le téléphone le 3 novembre (heures depuis minuit)
+        val yt = "app.morphe.android.youtube"
+        val main = "com.google.android.apps.youtube.app.watchwhile.MainActivity"
+        val USER_INTERACTION = 7
+        val STANDBY_BUCKET_CHANGED = 11
+        fun at(h: Int, m: Int, sec: Int) = ((h * 60 + m) * 60 + sec) * 1000L
+        val r = calc(
+            Ev(yt, "", STANDBY_BUCKET_CHANGED, at(0, 3, 0)),
+            Ev(yt, "", USER_INTERACTION, at(0, 10, 0)),
+            Ev(yt, main, PAUSED, at(0, 28, 17)),
+            Ev(yt, main, STOPPED, at(0, 28, 17)),
+            Ev(yt, main, RESUMED, at(8, 0, 17)), Ev(yt, main, PAUSED, at(8, 0, 18)), Ev(yt, main, STOPPED, at(8, 0, 18)),
+            Ev(yt, main, RESUMED, at(8, 0, 27)), Ev(yt, main, PAUSED, at(8, 0, 34)), Ev(yt, main, STOPPED, at(8, 0, 35)),
+            Ev(yt, main, RESUMED, at(10, 50, 35)), Ev(yt, main, PAUSED, at(10, 50, 35)),
+            Ev(yt, main, RESUMED, at(10, 50, 35)), Ev(yt, main, STOPPED, at(10, 50, 36)), Ev(yt, main, PAUSED, at(10, 50, 38)),
+        )
+        // 28 min 17 s avant 0h28, puis 1 s + 7 s + 3 s
+        assertEquals(at(0, 28, 17) + 1000 + 7000 + 3000, r[yt])
+    }
+
+    @Test fun `les événements hors premier plan sont ignorés`() {
+        val r = calc(Ev(tt, "", 7, min(1)), Ev(tt, "Main", RESUMED, min(5)), Ev(tt, "", 7, min(6)), Ev(tt, "Main", PAUSED, min(10)))
+        assertEquals(min(5), r[tt])
+    }
+
     @Test fun `aucun événement`() {
         assertEquals(emptyMap<String, Long>(), calc())
     }

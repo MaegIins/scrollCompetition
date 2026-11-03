@@ -73,10 +73,13 @@ object Usage {
     }
 
     /** Millisecondes au premier plan pour chaque paquet entre start et end. */
-    private fun allApps(ctx: Context, start: Long, end: Long): Map<String, Long> {
+    private fun allApps(ctx: Context, start: Long, end: Long): Map<String, Long> =
+        foregroundMs(rawEvents(ctx, start, end), start, end)
+
+    private fun rawEvents(ctx: Context, start: Long, end: Long): Sequence<Ev> {
         val usm = ctx.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
         val raw = usm.queryEvents(start, end)
-        val events = sequence {
+        return sequence {
             val e = UsageEvents.Event()
             while (raw.hasNextEvent()) {
                 raw.getNextEvent(e)
@@ -84,7 +87,22 @@ object Usage {
                 yield(Ev(pkg, e.className ?: "", e.eventType, e.timeStamp))
             }
         }
-        return foregroundMs(events, start, end)
+    }
+
+    /** Diagnostic détaillé d'un groupe de paquets (ex. tout ce qui ressemble à YouTube). */
+    data class PkgDiag(val pkg: String, val events: Int, val seconds: Long)
+
+    fun diagnose(ctx: Context, day: LocalDate, match: (String) -> Boolean): List<PkgDiag> {
+        val zone = ZoneId.systemDefault()
+        val start = day.atStartOfDay(zone).toInstant().toEpochMilli()
+        val end = minOf(System.currentTimeMillis(), day.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli())
+        val evs = rawEvents(ctx, start, end).filter { match(it.pkg) }.toList()
+        val fromEvents = foregroundMs(evs.asSequence(), start, end)
+        val installed = runCatching { ctx.packageManager.getInstalledApplications(0).map { it.packageName } }
+            .getOrDefault(emptyList()).filter(match)
+        return (installed + evs.map { it.pkg }).distinct().sorted().map { pkg ->
+            PkgDiag(pkg, evs.count { it.pkg == pkg }, (fromEvents[pkg] ?: 0L) / 1000)
+        }
     }
 
     /** Un événement d'usage, découplé de l'API Android pour pouvoir le tester sur la JVM. */
@@ -104,13 +122,19 @@ object Usage {
         fun add(pkg: String, ms: Long) { if (ms > 0) total[pkg] = (total[pkg] ?: 0L) + ms }
 
         for (e in events) {
+            // Seules la reprise et la pause disent si l'appli est au premier plan.
+            // - Les autres événements (interaction, priorité, service…) ne disent pas si l'appli
+            //   était déjà ouverte : les compter faisait perdre une session commencée avant minuit.
+            // - STOPPED (écran plus visible) arrive toujours après la pause ; deux instances du même
+            //   écran peuvent se chevaucher, et l'arrêt de l'une fermait la session de l'autre.
+            if (e.type != RESUMED && e.type != PAUSED) continue
             val open = resumed.getOrPut(e.pkg) { mutableSetOf() }
             when (e.type) {
                 RESUMED -> {
                     if (open.isEmpty()) since[e.pkg] = e.at
                     open += e.screen
                 }
-                PAUSED, STOPPED -> {
+                PAUSED -> {
                     if (open.remove(e.screen)) {
                         if (open.isEmpty()) add(e.pkg, e.at - since.getValue(e.pkg))
                     } else if (e.pkg !in seen) {

@@ -3,6 +3,11 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Voir toutes les applis installées (Android 11+ filtre sinon ce qu'on peut voir,
+         ex. YouTube Morphe). Sans conséquence hors Play Store. -->
+    <uses-permission
+        android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
     <!-- Lecture du temps d'usage par appli : accordée par l'utilisateur dans
          Réglages › Accès aux données d'utilisation (pas une permission classique) -->
     <uses-permission
