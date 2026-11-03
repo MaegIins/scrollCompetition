@@ -25,6 +25,34 @@ L'APK est signée avec la clé de debug de la machine qui compile : pour que les
 par-dessus l'ancienne version, compile toujours depuis la même machine. Elle s'installe hors Play Store
 (« sources inconnues »).
 
+### Récupérer l'APK sans recompiler
+
+La compilation est longue : si l'APK a déjà été compilée une fois, inutile de recommencer.
+
+- **Depuis le téléphone** : le site sert directement la dernière APK compilée, sur
+  `http://<adresse-du-serveur>/scroll-compet.apk` (ou Profil › Saisie automatique › Android › Télécharger).
+  En dev, `client/public/` est servi tel quel par Vite : la nouvelle version est en ligne dès la fin de
+  `npm run build:android`, sans redémarrer quoi que ce soit.
+- **Sur la machine qui a compilé**, le fichier est ici :
+  - `client/public/scroll-compet.apk` (copie publiée par `npm run build:android`) ;
+  - `android/app/build/outputs/apk/release/app-release.apk` (sortie brute de Gradle) ;
+  - `client/dist/scroll-compet.apk` après un `npm run build` (version servie en prod).
+- **Installer par câble ou en Wi-Fi** (débogage USB / sans fil activé sur le téléphone) :
+  ```bash
+  ~/Android/Sdk/platform-tools/adb install -r client/public/scroll-compet.apk
+  ```
+- **Vérifier la version d'un fichier APK** (elle s'affiche aussi en bas de l'écran de l'appli) :
+  ```bash
+  ~/Android/Sdk/build-tools/35.0.0/aapt2 dump badging client/public/scroll-compet.apk | grep -o "versionName='[^']*'"
+  ```
+
+L'APK n'est pas versionnée dans git (fichier généré) : après un `git clone` sur une nouvelle machine, il faut
+la compiler une fois, ou la copier depuis la machine qui l'a compilée (et garder cette machine pour les
+mises à jour, à cause de la signature).
+
+Pensez à incrémenter `versionCode` / `versionName` dans `android/app/build.gradle.kts` à chaque nouvelle
+version : c'est ce qui permet de vérifier, en bas de l'écran de l'appli, que le téléphone a bien la dernière.
+
 ## Tests
 
 ```bash

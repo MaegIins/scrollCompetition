@@ -33,6 +33,7 @@ class MainActivity : Activity() {
 
     private lateinit var cfg: Config
     private lateinit var root: LinearLayout
+    private var showDiag = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -134,7 +135,23 @@ class MainActivity : Activity() {
         }
         button("Synchroniser maintenant", ink, textColor = Color.WHITE) { syncNow() }
 
+        // 5. Diagnostic : ce qu'Android remonte vraiment (utile si une appli n'est pas comptée)
+        section("5. DIAGNOSTIC")
+        if (!showDiag) {
+            link("voir les applis détectées aujourd'hui") { showDiag = true; render() }
+        } else if (Usage.hasPermission(this)) {
+            caption("Applis utilisées aujourd'hui (nom technique → appli du classement) :")
+            val top = Usage.topApps(this, LocalDate.now())
+            if (top.isEmpty()) caption("Aucune.")
+            top.forEach { (pkg, sec) ->
+                val key = keyFor(pkg)
+                row(if (key != null) "$pkg → ${LABELS[key]?.substringBefore(' ')}" else pkg, Sync.fmt(sec), bold = key != null)
+            }
+            link("masquer") { showDiag = false; render() }
+        }
+
         caption("\nInstagram compte dans « Reels ». Pour ces applis, l'automatique remplace la saisie manuelle du jour.")
+        caption("Version ${packageManager.getPackageInfo(packageName, 0).versionName}")
     }
 
     private fun syncNow() {

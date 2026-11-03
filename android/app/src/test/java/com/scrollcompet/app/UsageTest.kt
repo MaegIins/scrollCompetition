@@ -75,8 +75,32 @@ class UsageTest {
         assertEquals(min(10), r[tt])
     }
 
-    @Test fun `YouTube Morphe compte dans YouTube`() {
-        assert("app.morphe.android.youtube" in TRACKED.getValue("youtube"))
+    @Test fun `YouTube officiel et modifiés comptent dans YouTube`() {
+        for (pkg in listOf(
+            "com.google.android.youtube",
+            "app.morphe.android.youtube",
+            "app.revanced.android.youtube",
+            "app.rvx.android.youtube",
+            "com.vanced.android.youtube",
+        )) assertEquals(pkg, "youtube", keyFor(pkg))
+    }
+
+    @Test fun `YouTube Music, Kids, Studio, TV ne comptent pas`() {
+        for (pkg in listOf(
+            "com.google.android.apps.youtube.music",
+            "app.morphe.android.apps.youtube.music",
+            "com.google.android.apps.youtube.kids",
+            "com.google.android.apps.youtube.creator",
+            "com.google.android.youtube.tv",
+            "com.google.android.apps.youtube.unplugged",
+        )) assertEquals(pkg, null, keyFor(pkg))
+    }
+
+    @Test fun `autres applis suivies et inconnues`() {
+        assertEquals("tiktok", keyFor("com.zhiliaoapp.musically"))
+        assertEquals("instagram", keyFor("com.instagram.android"))
+        assertEquals("x", keyFor("com.twitter.android"))
+        assertEquals(null, keyFor("com.whatsapp"))
         assert(TRACKED.values.flatten().let { it.size == it.toSet().size }) // aucun paquet dans deux applis
     }
 

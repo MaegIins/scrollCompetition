@@ -18,6 +18,21 @@ val TRACKED: Map<String, List<String>> = linkedMapOf(
         "app.morphe.android.youtube", // YouTube Morphe (YouTube modifié, paquet renommé)
     ),
 )
+private val PKG_TO_KEY = TRACKED.flatMap { (key, pkgs) -> pkgs.map { it to key } }.toMap()
+// Variantes de YouTube à ne pas compter (pas du scroll de vidéos)
+private val YOUTUBE_EXCLUDED = listOf("music", "kids", "creator", "studio", ".tv", "unplugged")
+
+/**
+ * Appli du classement à laquelle rattacher un paquet, ou null.
+ * Les YouTube modifiés (Morphe, ReVanced…) renomment leur paquet : tout paquet contenant
+ * « youtube » compte donc dans YouTube, sauf Music, Kids, Studio, TV.
+ */
+fun keyFor(pkg: String): String? {
+    PKG_TO_KEY[pkg]?.let { return it }
+    val p = pkg.lowercase()
+    return if ("youtube" in p && YOUTUBE_EXCLUDED.none { it in p }) "youtube" else null
+}
+
 val LABELS = mapOf("tiktok" to "TikTok", "instagram" to "Instagram (Reels)", "x" to "X (Twitter)", "youtube" to "YouTube")
 
 object Usage {
@@ -41,7 +56,24 @@ object Usage {
         val result = TRACKED.keys.associateWith { 0L }.toMutableMap()
         if (end <= start) return result
 
-        val pkgToKey = TRACKED.flatMap { (key, pkgs) -> pkgs.map { it to key } }.toMap()
+        allApps(ctx, start, end).forEach { (pkg, ms) ->
+            keyFor(pkg)?.let { result[it] = (result[it] ?: 0L) + ms / 1000 }
+        }
+        return result
+    }
+
+    /** Diagnostic : toutes les applis utilisées ce jour-là, en secondes, de la plus utilisée à la moins. */
+    fun topApps(ctx: Context, day: LocalDate, limit: Int = 15, nowMs: Long = System.currentTimeMillis()): List<Pair<String, Long>> {
+        val zone = ZoneId.systemDefault()
+        val start = day.atStartOfDay(zone).toInstant().toEpochMilli()
+        val end = minOf(nowMs, day.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli())
+        if (end <= start) return emptyList()
+        return allApps(ctx, start, end).map { it.key to it.value / 1000 }
+            .filter { it.second > 0 }.sortedByDescending { it.second }.take(limit)
+    }
+
+    /** Millisecondes au premier plan pour chaque paquet entre start et end. */
+    private fun allApps(ctx: Context, start: Long, end: Long): Map<String, Long> {
         val usm = ctx.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
         val raw = usm.queryEvents(start, end)
         val events = sequence {
@@ -49,13 +81,10 @@ object Usage {
             while (raw.hasNextEvent()) {
                 raw.getNextEvent(e)
                 val pkg = e.packageName ?: continue
-                if (pkg in pkgToKey) yield(Ev(pkg, e.className ?: "", e.eventType, e.timeStamp))
+                yield(Ev(pkg, e.className ?: "", e.eventType, e.timeStamp))
             }
         }
-        foregroundMs(events, start, end).forEach { (pkg, ms) ->
-            pkgToKey[pkg]?.let { result[it] = (result[it] ?: 0L) + ms / 1000 }
-        }
-        return result
+        return foregroundMs(events, start, end)
     }
 
     /** Un événement d'usage, découplé de l'API Android pour pouvoir le tester sur la JVM. */
