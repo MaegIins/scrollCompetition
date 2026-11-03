@@ -206,7 +206,14 @@ async function copy(text, id) {
             Connecter l'appli
           </button>
         </li>
-        <li>Dans l'appli, touche <b>Ouvrir le réglage</b> et active <b>Scroll Compet</b> dans « Accès aux données d'utilisation ».</li>
+        <li>
+          Dans l'appli, touche <b>Ouvrir le réglage</b> et active <b>Scroll Compet</b> dans « Accès aux données d'utilisation ».
+          <div class="mt-2 border-2 border-ink bg-paper p-2 font-mono text-[11px] leading-snug">
+            <b>Grisé / « Paramètre restreint » ?</b> Android bloque ce réglage pour les applis hors Play Store.
+            Touche-le une fois, ferme le message, puis Réglages › Applis › Voir toutes les applis › Scroll Compet ›
+            menu <b>⋮</b> en haut à droite › <b>Autoriser les paramètres restreints</b>. Reviens et active-le.
+          </div>
+        </li>
       </ol>
 
       <details class="font-mono text-[11px]">

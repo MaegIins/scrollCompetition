@@ -106,6 +106,14 @@ class MainActivity : Activity() {
         } else {
             text("Android doit autoriser l'appli à lire ton temps d'utilisation. Active « Scroll Compet » dans la liste.")
             button("Ouvrir le réglage", hi) { startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
+            // Android 13+ bloque ce réglage pour les applis installées hors Play Store (« paramètre restreint »)
+            caption(
+                "Interrupteur grisé / « Paramètre restreint » ?\n" +
+                    "1. Touche-le une fois ici, ferme le message.\n" +
+                    "2. Réglages › Applis › Voir toutes les applis › Scroll Compet.\n" +
+                    "3. Menu ⋮ en haut à droite › « Autoriser les paramètres restreints ».\n" +
+                    "4. Reviens ici › Ouvrir le réglage : l'interrupteur marche."
+            )
         }
 
         // 3. Aujourd'hui

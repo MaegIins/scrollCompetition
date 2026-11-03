@@ -13,7 +13,10 @@ val TRACKED: Map<String, List<String>> = linkedMapOf(
     "tiktok" to listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill", "com.zhiliaoapp.musically.go"),
     "instagram" to listOf("com.instagram.android", "com.instagram.lite"), // compte dans « Reels »
     "x" to listOf("com.twitter.android"),
-    "youtube" to listOf("com.google.android.youtube"),
+    "youtube" to listOf(
+        "com.google.android.youtube",
+        "app.morphe.android.youtube", // YouTube Morphe (YouTube modifié, paquet renommé)
+    ),
 )
 val LABELS = mapOf("tiktok" to "TikTok", "instagram" to "Instagram (Reels)", "x" to "X (Twitter)", "youtube" to "YouTube")
 

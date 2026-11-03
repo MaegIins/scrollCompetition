@@ -75,6 +75,11 @@ class UsageTest {
         assertEquals(min(10), r[tt])
     }
 
+    @Test fun `YouTube Morphe compte dans YouTube`() {
+        assert("app.morphe.android.youtube" in TRACKED.getValue("youtube"))
+        assert(TRACKED.values.flatten().let { it.size == it.toSet().size }) // aucun paquet dans deux applis
+    }
+
     @Test fun `aucun événement`() {
         assertEquals(emptyMap<String, Long>(), calc())
     }
