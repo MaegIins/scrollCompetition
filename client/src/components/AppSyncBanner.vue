@@ -4,19 +4,40 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { api, nativeApp, connectAndroidApp } from '../api'
 
+const emit = defineEmits(['synced'])
+
 const state = ref('ready') // 'ready' | 'no-key' | 'no-permission'
 const error = ref('')
 const busy = ref(false)
+// Bouton « Synchroniser » : seulement si l'appli installée le sait (versions ≥ 1.6)
+const canSync = !!nativeApp && typeof nativeApp.syncNow === 'function'
+const syncing = ref(false)
+const lastSync = ref(canSync ? nativeApp.lastSync() : '')
 
 const refresh = () => {
   if (!nativeApp) return
   state.value = !nativeApp.hasKey() ? 'no-key' : !nativeApp.isConnected() ? 'no-permission' : 'ready'
 }
+function onSynced(e) {
+  syncing.value = false
+  lastSync.value = e.detail?.message ?? ''
+  if (e.detail?.ok) emit('synced')
+}
+function syncNow() {
+  if (syncing.value) return
+  syncing.value = true
+  nativeApp.syncNow() // l'appli répond par l'événement « scrollapp-synced »
+}
+
 onMounted(() => {
   refresh()
   window.addEventListener('scrollapp-change', refresh) // envoyé par l'appli après configuration
+  window.addEventListener('scrollapp-synced', onSynced)
 })
-onBeforeUnmount(() => window.removeEventListener('scrollapp-change', refresh))
+onBeforeUnmount(() => {
+  window.removeEventListener('scrollapp-change', refresh)
+  window.removeEventListener('scrollapp-synced', onSynced)
+})
 
 async function activate() {
   error.value = ''
@@ -53,5 +74,20 @@ async function activate() {
       </button>
     </template>
     <p v-if="error" class="mt-2 bg-alert px-2 py-1 font-mono text-xs text-white">{{ error }}</p>
+  </div>
+  <div v-else-if="canSync && state === 'ready'" class="flex items-center gap-3">
+    <button
+      :disabled="syncing"
+      class="btn shrink-0 bg-ink px-4 py-2 font-display text-sm text-white uppercase disabled:opacity-50"
+      @click="syncNow"
+    >
+      {{ syncing ? 'Synchro…' : '↻ Synchroniser' }}
+    </button>
+    <p
+      class="min-w-0 truncate font-mono text-xs"
+      :class="lastSync.startsWith('Échec') ? 'text-alert' : 'text-ink/60'"
+    >
+      {{ lastSync }}
+    </p>
   </div>
 </template>

@@ -16,6 +16,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.Toast
+import org.json.JSONObject
 import kotlin.concurrent.thread
 
 /**
@@ -113,13 +114,29 @@ class MainActivity : Activity() {
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
 
-    /** Ce que la page peut appeler : window.ScrollApp.isConnected(), openSync(), version() */
+    /** Ce que la page peut appeler : window.ScrollApp.isConnected(), openSync(), syncNow(), lastSync(), version() */
     inner class Bridge {
         @JavascriptInterface fun isConnected(): Boolean = cfg.isConfigured && Usage.hasPermission(this@MainActivity)
         @JavascriptInterface fun hasKey(): Boolean = cfg.isConfigured
         @JavascriptInterface fun openSync() = runOnUiThread {
             startActivity(Intent(this@MainActivity, SyncActivity::class.java))
         }
+        /**
+         * Synchro immédiate, en arrière-plan. À la fin, la page reçoit l'événement « scrollapp-synced »
+         * avec detail = { ok, message }.
+         */
+        @JavascriptInterface fun syncNow() {
+            thread {
+                val r = Sync.run(this@MainActivity)
+                val detail = JSONObject()
+                    .put("ok", r.isSuccess)
+                    .put("message", r.fold({ it }, { "Échec : ${it.message}" }))
+                runOnUiThread {
+                    web.evaluateJavascript("window.dispatchEvent(new CustomEvent('scrollapp-synced', { detail: $detail }))", null)
+                }
+            }
+        }
+        @JavascriptInterface fun lastSync(): String = cfg.lastSync
         @JavascriptInterface fun version(): String = packageManager.getPackageInfo(packageName, 0).versionName ?: ""
     }
 

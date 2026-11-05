@@ -99,7 +99,7 @@ async function logout() {
         @back="goto('home')"
       />
       <template v-else>
-        <AppSyncBanner />
+        <AppSyncBanner @synced="refreshKey++" />
         <EntryForm v-model:day="day" @saved="refreshKey++" />
         <Leaderboard :day="day" :me="me" :colors="colors" :refresh-key="refreshKey" />
         <Stats :users="users" :colors="colors" :me="me" :refresh-key="refreshKey" />
