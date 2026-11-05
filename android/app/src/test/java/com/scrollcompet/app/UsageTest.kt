@@ -3,6 +3,9 @@ package com.scrollcompet.app
 import com.scrollcompet.app.Usage.Ev
 import com.scrollcompet.app.Usage.PAUSED
 import com.scrollcompet.app.Usage.RESUMED
+import com.scrollcompet.app.Usage.SCREEN_OFF
+import com.scrollcompet.app.Usage.SHUTDOWN
+import com.scrollcompet.app.Usage.STARTUP
 import com.scrollcompet.app.Usage.STOPPED
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -132,5 +135,38 @@ class UsageTest {
 
     @Test fun `aucun événement`() {
         assertEquals(emptyMap<String, Long>(), calc())
+    }
+
+    private val sys = "android"
+
+    @Test fun `téléphone éteint batterie à plat - pas de temps compté pendant l'extinction`() {
+        // YouTube ouvert, le téléphone meurt sans pause ni extinction enregistrée, redémarre 7 h plus tard
+        val yt = "com.google.android.youtube"
+        val r = calc(
+            Ev(yt, "Main", RESUMED, min(60)),
+            Ev(yt, "", 7, min(90)), // dernier signe de vie
+            Ev(sys, "", STARTUP, min(60 * 8)),
+            Ev(yt, "Main", RESUMED, min(60 * 8 + 5)), Ev(yt, "Main", PAUSED, min(60 * 8 + 10)),
+        )
+        assertEquals(min(30) + min(5), r[yt])
+    }
+
+    @Test fun `redémarrage sans réouverture - pas compté jusqu'à la fin de la journée`() {
+        val r = calc(Ev(tt, "Main", RESUMED, min(60)), Ev(tt, "", 7, min(70)), Ev(sys, "", STARTUP, min(300)))
+        assertEquals(min(10), r[tt])
+    }
+
+    @Test fun `extinction propre ferme la session`() {
+        val r = calc(Ev(tt, "Main", RESUMED, min(10)), Ev(sys, "", SHUTDOWN, min(40)), Ev(sys, "", STARTUP, min(100)))
+        assertEquals(min(30), r[tt])
+    }
+
+    @Test fun `écran éteint ferme la session, pause tardive ignorée`() {
+        val r = calc(
+            Ev(tt, "Main", RESUMED, min(10)),
+            Ev(sys, "", SCREEN_OFF, min(20)),
+            Ev(tt, "Main", PAUSED, min(200)),
+        )
+        assertEquals(min(10), r[tt])
     }
 }

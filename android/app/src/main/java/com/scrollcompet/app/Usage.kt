@@ -96,8 +96,10 @@ object Usage {
         val zone = ZoneId.systemDefault()
         val start = day.atStartOfDay(zone).toInstant().toEpochMilli()
         val end = minOf(System.currentTimeMillis(), day.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli())
-        val evs = rawEvents(ctx, start, end).filter { match(it.pkg) }.toList()
-        val fromEvents = foregroundMs(evs.asSequence(), start, end)
+        val all = rawEvents(ctx, start, end).toList()
+        val evs = all.filter { match(it.pkg) }
+        // Calcul sur tous les événements : les événements système (extinction, écran éteint) en font partie
+        val fromEvents = foregroundMs(all.asSequence(), start, end)
         val installed = runCatching { ctx.packageManager.getInstalledApplications(0).map { it.packageName } }
             .getOrDefault(emptyList()).filter(match)
         return (installed + evs.map { it.pkg }).distinct().sorted().map { pkg ->
@@ -120,8 +122,27 @@ object Usage {
         val seen = mutableSetOf<String>()
         val total = mutableMapOf<String, Long>()
         fun add(pkg: String, ms: Long) { if (ms > 0) total[pkg] = (total[pkg] ?: 0L) + ms }
+        var lastAt = start // horodatage du dernier événement vu, toutes applis confondues
+        /** Ferme toutes les sessions ouvertes à l'instant `at` (extinction, écran éteint…). */
+        fun closeAll(at: Long) {
+            resumed.forEach { (pkg, open) ->
+                if (open.isNotEmpty()) add(pkg, at - since.getValue(pkg))
+                open.clear()
+                seen += pkg // une pause orpheline qui suivrait ne doit pas recompter depuis start
+            }
+        }
 
         for (e in events) {
+            val prevAt = lastAt
+            lastAt = maxOf(lastAt, e.at)
+            when (e.type) {
+                // Téléphone éteint proprement ou écran éteint : plus rien n'est au premier plan.
+                SHUTDOWN, SCREEN_OFF -> { closeAll(e.at); continue }
+                // Redémarrage sans extinction enregistrée (batterie à plat, plantage) : l'appli ouverte
+                // n'a jamais reçu sa pause. On coupe au dernier signe de vie avant le redémarrage,
+                // sinon tout le temps téléphone éteint est compté (bug des 7 h).
+                STARTUP -> { closeAll(prevAt); continue }
+            }
             // Seules la reprise et la pause disent si l'appli est au premier plan.
             // - Les autres événements (interaction, priorité, service…) ne disent pas si l'appli
             //   était déjà ouverte : les compter faisait perdre une session commencée avant minuit.
@@ -154,4 +175,7 @@ object Usage {
     const val RESUMED = 1 // MOVE_TO_FOREGROUND / ACTIVITY_RESUMED
     const val PAUSED = 2 // MOVE_TO_BACKGROUND / ACTIVITY_PAUSED
     const val STOPPED = 23 // ACTIVITY_STOPPED
+    const val SCREEN_OFF = 16 // SCREEN_NON_INTERACTIVE
+    const val SHUTDOWN = 26 // DEVICE_SHUTDOWN
+    const val STARTUP = 27 // DEVICE_STARTUP
 }
